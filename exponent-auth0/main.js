@@ -8,36 +8,37 @@ import {
   Linking,
 } from 'react-native';
 import jwtDecoder from 'jwt-decode';
+import ApolloClient, { createNetworkInterface } from 'apollo-client';
+import gql from 'graphql-tag';
 
-const redirect_uri = 'exp://e8-j5w.charlesvinette.exponent-auth0.exp.direct/+/redirect';
-const auth0_client_id = 'pdnNOE8axmLRPk6opnr6pSbIxmFJxAlA';
+
+const redirect_uri = 'exp://xz-5yt.marktani.exponent-auth0.exp.direct/+/redirect';
+const auth0_client_id = 'wtDi2d3hieLqDNThpXmFuuoxcbF4bV3d';
+const authorize_url = 'https://marktani.eu.auth0.com/authorize';
+
 
 class App extends React.Component {
   state = {
     username: undefined,
+    counter: undefined,
   };
   componentDidMount() {
     Linking.addEventListener('url', this._handleAuth0Redirect);
   }
 
-  _loginWithAuth0 = async () => {
-    const redirectionURL = 'https://charlesvinette.auth0.com/authorize' + this._toQueryString({
-      client_id: auth0_client_id,
-      response_type: 'token',
-      scope: 'openid name',
-      redirect_uri,
-      state: redirect_uri,
-    });
-    Exponent.WebBrowser.openBrowserAsync(redirectionURL);
+  _logout = () => {
+    this.setState({
+      username: undefined,
+      counter: undefined
+    })
   }
 
-  _loginWithAuth0Twitter = async () => {
-    const redirectionURL = 'https://charlesvinette.auth0.com/authorize' + this._toQueryString({
+  _loginWithAuth0 = async () => {
+    const redirectionURL = authorize_url + this._toQueryString({
       client_id: auth0_client_id,
       response_type: 'token',
       scope: 'openid name',
       redirect_uri,
-      connection: 'twitter',
       state: redirect_uri,
     });
     Exponent.WebBrowser.openBrowserAsync(redirectionURL);
@@ -57,7 +58,62 @@ class App extends React.Component {
     const encodedToken = responseObj.id_token;
     const decodedToken = jwtDecoder(encodedToken);
     const username = decodedToken.name;
-    this.setState({ username });
+
+    const networkInterface = createNetworkInterface({ uri: 'https://api.graph.cool/simple/v1/ciz5w00wk16gn0109n00jsel4' })
+
+    networkInterface.use([{
+      applyMiddleware(req, next) {
+        if (!req.options.headers) {
+          req.options.headers = {};  // Create the header object if needed.
+        }
+        req.options.headers['authorization'] = `Bearer ${encodedToken}`;
+        next();
+      }
+    }]);
+
+    const client = new ApolloClient({
+      networkInterface
+    });
+
+    // check if a user is already logged in
+    const userResult = await client.query({
+      query: gql`{
+        user {
+          id
+          counter
+        }
+      }`
+    })
+
+    if (!userResult.data.user) {
+      // need to create user
+      await client.mutate({mutation: gql`mutation {
+        createUser(
+          authProvider: {
+            auth0: {
+              idToken: "${encodedToken}"
+            }
+          }
+          name: "${username}"
+          counter: 1
+        ) {
+          id
+        }
+      }`})
+      this.setState({ counter: 1, username })
+    } else {
+      const increaseCounter = await client.mutate({mutation: gql`mutation {
+        updateUser(
+          id: "${userResult.data.user.id}"
+          counter: ${userResult.data.user.counter + 1}
+        ) {
+          counter
+        }
+      }`})
+      this.setState({ counter: increaseCounter.data.updateUser.counter, username })
+    }
+
+
   }
 
   /**
@@ -73,12 +129,15 @@ class App extends React.Component {
     return (
       <View style={styles.container}>
         {this.state.username !== undefined ?
-          <Text style={styles.title}>Hi {this.state.username}!</Text> :
+          <View>
+            <Text style={styles.title}>Hi {this.state.username}, you logged in {this.state.counter} times!</Text>
+            <Button title="Logout" onPress={this._logout} />
+          </View> :
+
           <View>
             <Text style={styles.title}>Example: Auth0 login</Text>
             <Button title="Login with Auth0" onPress={this._loginWithAuth0} />
-            <Text style={styles.title}>Example: Auth0 force Twitter</Text>
-            <Button title="Login with Auth0-Twitter" onPress={this._loginWithAuth0Twitter} />
+
           </View>
         }
       </View>
